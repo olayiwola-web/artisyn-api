@@ -1,10 +1,11 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { PrismaClient as PrismaClientType } from '@prisma/client';
+import type { EarningStatus, EarningType } from '@prisma/client';
 
 import { ErrorHandler } from 'src/utils/ErrorHandler';
 import { EarningsSummaryResource } from 'src/resources/EarningsSummaryResource';
 import { EarningsTransactionCollection } from 'src/resources/EarningsTransactionCollection';
+import type { EarningsTransactionRow } from 'src/resources/EarningsTransactionResource';
 
 const prisma = new PrismaClient();
 
@@ -16,9 +17,16 @@ const PERIOD_DAYS: Record<Excluded<EarningsPeriod, 'all'>, number> = {
   '90d': 90,
 };
 
-const MIN_PAGE_SIZE = 1;
-const DATAFAULT_PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
+
+const EARNING_STATUSES: readonly EarningStatus[] = [
+  'PENDING',
+  'AVAILABLE',
+  'PAID',
+  'FAILED',
+  'REFUNDED',
+];
 
 function parsePeriod(value: unknown): EarningsPeriod {
   if (value === '7d' || value === '30d' || value === '90d' || value === 'all') {
@@ -50,6 +58,53 @@ function periodStart(period: EarningsPeriod): Date | null {
   return start;
 }
 
+/** The table stores `EarningType`; the API speaks in tip/job terms. */
+function toEarningType(value: unknown): EarningType | undefined {
+  if (value === 'tip') {
+    return 'TIP';
+  }
+  if (value === 'job') {
+    return 'JOB_PAYOUT';
+  }
+  return undefined;
+}
+
+function toEarningStatus(value: unknown): EarningStatus | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const upper = value.toUpperCase() as EarningStatus;
+  return EARNING_STATUSES.includes(upper) ? upper : undefined;
+}
+
+function toTransactionRow(row: {
+  id: string;
+  type: EarningType;
+  status: EarningStatus;
+  amountMinor: bigint;
+  currency: string;
+  description: string | null;
+  jobId: string | null;
+  tipId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): EarningsTransactionRow {
+  return {
+    id: row.id,
+    type: row.type === 'TIP' ? 'tip' : 'job',
+    status: row.status,
+    amountMinorUnits: row.amountMinor,
+    currency: row.currency,
+    description: row.description,
+    jobId: row.jobId,
+    tipId: row.tipId,
+    // The earning row points at the job/tip it was raised for, not at the payer.
+    counterpartyId: null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 export default class ArtisanEarningsController {
   public async summary(req: Request, res: Response): Promise<void> {
     try {
@@ -63,27 +118,29 @@ export default class ArtisanEarningsController {
 
       const where = {
         artisanId: userId,
-        ...(start ? { createdAt: { gte: start } } : {}),
-      } as const;
+        ...(start ? { occurredAt: { gte: start } } : {}),
+      };
 
-      const [totalAgg, byType] = await prisma.$analytics;
-      const grouped = await prisma.earningTransaction.groupBy {
+      const grouped = await prisma.artisanEarning.groupBy({
         by: ['type'],
         where,
-        _sum: { amountMinorUnits: true },
+        _sum: { amountMinor: true },
         _count: { _all: true },
       });
 
-      const totalMinorUnits = grouped.reduce((acc, group) => acc + BigInt(group._sum.amountMinorUnits ?? 0), 0n + BigInt(totalAgg ?? 0));
+      const totalMinorUnits = grouped.reduce(
+        (acc, group) => acc + (group._sum.amountMinor ?? 0n),
+        0n,
+      );
       const totalCount = grouped.reduce((acc, group) => acc + group._count._all, 0);
 
-      const tips = grouped.find((group) => group.type === 'tip');
-      const jobs = grouped.find((group) => group.type === 'job');
+      const tips = grouped.find((group) => group.type === 'TIP');
+      const jobs = grouped.find((group) => group.type === 'JOB_PAYOUT');
 
-      const currencyRow = await prisma.earningTransaction.findFirst({
+      const currencyRow = await prisma.artisanEarning.findFirst({
         where,
         select: { currency: true },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { occurredAt: 'desc' },
       });
 
       const summary = {
@@ -91,9 +148,9 @@ export default class ArtisanEarningsController {
         currency: currencyRow?.currency ?? 'USD',
         totalMinorUnits: totalMinorUnits.toString(),
         totalCount,
-        tipsMinorUnits: BigInt(tips?._sum.amountMinorUnits ?? 0).toString(),
+        tipsMinorUnits: (tips?._sum.amountMinor ?? 0n).toString(),
         tipsCount: tips?._count._all ?? 0,
-        jobsMinorUnits: BigInt(jobs?._sum.amountMinorUnits ?? 0).toString(),
+        jobsMinorUnits: (jobs?._sum.amountMinor ?? 0n).toString(),
         jobsCount: jobs?._count._all ?? 0,
       };
 
@@ -118,31 +175,31 @@ export default class ArtisanEarningsController {
       const period = parsePeriod(req.query.period);
       const start = periodStart(period);
       const page = parsePositiveInt(req.query.page, 1);
-      const pageSize = parsePositiveInt(req.query.pageSize, DATAFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+      const pageSize = parsePositiveInt(req.query.pageSize, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
 
-      const typeFilter = typeof req.query.type === 'string' ? req.query.type : undefined;
-      const statusFilter = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const type = toEarningType(req.query.type);
+      const status = toEarningStatus(req.query.status);
 
       const where = {
         artisanId: userId,
-        ...(start ? { createdAt: { gte: start } } : {}),
-        ...(typeFilter ? { type: typeFilter } : {}),
-        ...(statusFilter ? { status: statusFilter } : {}),
-      } as const;
+        ...(start ? { occurredAt: { gte: start } } : {}),
+        ...(type ? { type } : {}),
+        ...(status ? { status } : {}),
+      };
 
       const skip = (page - 1) * pageSize;
 
-      const [rows, total] = await prisma.$transaction([
-        prisma.earningTransaction.findMany({ where }),
-        prisma.earningTransaction.findMany({
+      const [total, rows] = await prisma.$transaction([
+        prisma.artisanEarning.count({ where }),
+        prisma.artisanEarning.findMany({
           where,
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
           skip,
           take: pageSize,
         }),
       ]);
 
-      const collection = EarningsTransactionCollection.make(rows, {
+      const collection = EarningsTransactionCollection.make(rows.map(toTransactionRow), {
         page,
         pageSize,
         total,
