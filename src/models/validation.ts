@@ -284,10 +284,10 @@ export const tipValidation = {
 // Artisan earnings validation
 export const earningsValidation = {
   summary: [
-    query('period').optional().customSanitizer(toUpper).isIn(Object.values(EarningsPeriod)).withMessage('Invalid earnings period'),
+    query('period').optional().isIn(Object.values(EarningsPeriod)).withMessage('Invalid earnings period'),
   ],
   transactions: [
-    query('period').optional().customSanitizer(toUpper).isIn(Object.values(EarningsPeriod)).withMessage('Invalid earnings period'),
+    query('period').optional().isIn(Object.values(EarningsPeriod)).withMessage('Invalid earnings period'),
     query('type').optional().customSanitizer(toUpper).isIn(Object.values(EarningsTransactionType)).withMessage('Invalid transaction type'),
     query('status').optional().customSanitizer(toUpper).isIn(Object.values(EarningsTransactionStatus)).withMessage('Invalid transaction status'),
     query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),

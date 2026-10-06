@@ -298,3 +298,24 @@ export interface ICuratorVerificationHistory {
   metadata: any;
   createdAt: Date;
 }
+
+// Artisan earnings ledger enums (mirrors the `ArtisanEarning` model in prisma/schema.prisma)
+export enum EarningsPeriod {
+  LAST_7_DAYS = '7d',
+  LAST_30_DAYS = '30d',
+  LAST_90_DAYS = '90d',
+  ALL = 'all',
+}
+
+export enum EarningsTransactionType {
+  JOB_PAYOUT = 'JOB_PAYOUT',
+  TIP = 'TIP',
+}
+
+export enum EarningsTransactionStatus {
+  PENDING = 'PENDING',
+  AVAILABLE = 'AVAILABLE',
+  PAID = 'PAID',
+  FAILED = 'FAILED',
+  REFUNDED = 'REFUNDED',
+}

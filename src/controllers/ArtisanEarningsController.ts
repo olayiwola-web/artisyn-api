@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import type { EarningStatus, EarningType } from '@prisma/client';
 
-import { ErrorHandler } from 'src/utils/ErrorHandler';
 import { EarningsSummaryResource } from 'src/resources/EarningsSummaryResource';
 import { EarningsTransactionCollection } from 'src/resources/EarningsTransactionCollection';
 import type { EarningsTransactionRow } from 'src/resources/EarningsTransactionResource';
@@ -60,10 +59,14 @@ function periodStart(period: EarningsPeriod): Date | null {
 
 /** The table stores `EarningType`; the API speaks in tip/job terms. */
 function toEarningType(value: unknown): EarningType | undefined {
-  if (value === 'tip') {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.toUpperCase();
+  if (normalized === 'TIP') {
     return 'TIP';
   }
-  if (value === 'job') {
+  if (normalized === 'JOB' || normalized === 'JOB_PAYOUT') {
     return 'JOB_PAYOUT';
   }
   return undefined;
@@ -110,7 +113,8 @@ export default class ArtisanEarningsController {
     try {
       const userId = req.user?.id;
       if (!userId) {
-        return ErrorHandler.unauthorized(res, 'Authentication required');
+        res.status(401).json({ status: 'error', message: 'Authentication required', code: 401 });
+        return;
       }
 
       const period = parsePeriod(req.query.period);
@@ -161,7 +165,11 @@ export default class ArtisanEarningsController {
         code: 200,
       });
     } catch (error) {
-      return ErrorHandler.internalServerError(res, 'Failed to load earnings summary', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to load earnings summary',
+        code: 500,
+      });
     }
   }
 
@@ -169,7 +177,8 @@ export default class ArtisanEarningsController {
     try {
       const userId = req.user?.id;
       if (!userId) {
-        return ErrorHandler.unauthorized(res, 'Authentication required');
+        res.status(401).json({ status: 'error', message: 'Authentication required', code: 401 });
+        return;
       }
 
       const period = parsePeriod(req.query.period);
@@ -213,7 +222,11 @@ export default class ArtisanEarningsController {
         code: 200,
       });
     } catch (error) {
-      return ErrorHandler.internalServerError(res, 'Failed to load earnings transactions', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to load earnings transactions',
+        code: 500,
+      });
     }
   }
 }
