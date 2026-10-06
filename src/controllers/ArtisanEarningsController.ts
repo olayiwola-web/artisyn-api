@@ -1,12 +1,10 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import type { EarningStatus, EarningType } from '@prisma/client';
 
+import { prisma } from 'src/db';
 import { EarningsSummaryResource } from 'src/resources/EarningsSummaryResource';
 import { EarningsTransactionCollection } from 'src/resources/EarningsTransactionCollection';
 import type { EarningsTransactionRow } from 'src/resources/EarningsTransactionResource';
-
-const prisma = new PrismaClient();
 
 export type EarningsPeriod = '7d' | '30d' | '90d' | 'all';
 
